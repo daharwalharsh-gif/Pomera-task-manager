@@ -978,7 +978,13 @@ app.post('/api/login', async (req, res) => {
       maxAge: 7 * 24 * 60 * 60 * 1000
     });
     res.json({ id: user.id, name: user.name, email: user.email, role: user.role, token });
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) {
+    // Poora error sirf server log me — client ko generic message. Warna DB ka
+    // username/host login page par sabko dikh jaata hai.
+    console.error('Login failed:', err.message);
+    const detail = process.env.NODE_ENV === 'production' ? '' : ' (' + err.message + ')';
+    res.status(500).json({ error: 'Server abhi login nahi kar pa raha. Thodi der baad try karo.' + detail });
+  }
 });
 
 app.post('/api/logout', (req, res) => {

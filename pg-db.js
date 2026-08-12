@@ -266,9 +266,9 @@ function buildMysqlConfig() {
   return Object.assign({
     host: (process.env.MYSQL_HOST || process.env.PG_HOST || 'localhost').trim(),
     port: parseInt(process.env.MYSQL_PORT || '3306', 10),
-    user: process.env.MYSQL_USER || process.env.PG_USER,
-    password: process.env.MYSQL_PASSWORD || process.env.PG_PASSWORD,
-    database: process.env.MYSQL_DATABASE || process.env.PG_DATABASE,
+    user: String(process.env.MYSQL_USER || process.env.PG_USER || '').trim(),
+    password: String(process.env.MYSQL_PASSWORD || process.env.PG_PASSWORD || '').trim(),
+    database: String(process.env.MYSQL_DATABASE || process.env.PG_DATABASE || '').trim(),
   }, base, ssl ? { ssl } : {});
 }
 
@@ -276,7 +276,12 @@ function getPool() {
   if (_pool) return _pool;
   if (MYSQL_MODE) {
     const mysql = require('mysql2/promise');
-    _pool = mysql.createPool(buildMysqlConfig());
+    const cfg = buildMysqlConfig();
+    // Password kabhi print nahi — sirf yeh ki set hai ya nahi.
+    console.log('  🔌 MySQL: ' + (cfg.uri ? '(MYSQL_URL se)' :
+      cfg.user + '@' + cfg.host + ':' + cfg.port + ' db=' + cfg.database +
+      ' password=' + (cfg.password ? cfg.password.length + ' chars' : 'KHAALI')));
+    _pool = mysql.createPool(cfg);
     _pool.on('error', (err) => console.error('  ❌ MySQL pool error:', err.message));
     return _pool;
   }

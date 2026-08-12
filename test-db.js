@@ -24,8 +24,8 @@ const info = m => console.log('    ' + m);
 
   if (BACKEND === 'mysql') {
     const host = process.env.MYSQL_HOST || process.env.PG_HOST || 'localhost';
-    const user = process.env.MYSQL_USER || process.env.PG_USER;
-    const dbNm = process.env.MYSQL_DATABASE || process.env.PG_DATABASE;
+    const user = String(process.env.MYSQL_USER || process.env.PG_USER || '').trim();
+    const dbNm = String(process.env.MYSQL_DATABASE || process.env.PG_DATABASE || '').trim();
     const pass = process.env.MYSQL_PASSWORD || process.env.PG_PASSWORD;
 
     console.log('  Host     : ' + host + ':' + (process.env.MYSQL_PORT || 3306));
@@ -54,7 +54,11 @@ const info = m => console.log('    ' + m);
       fail('Connect nahi hua: ' + e.code + ' — ' + e.message);
       console.log('');
       if (e.code === 'ER_ACCESS_DENIED_ERROR')
-        info('Username ya password galat hai. hPanel me password reset kar ke dobara try karo.');
+        info('Username ya password galat hai.\n' +
+             '    DHYAN DO: MySQL me chhote-bade akshar alag maane jaate hain — hPanel me\n' +
+             '    jo naam dikhta hai BILKUL wahi copy karo (Pomera1 aur pomera1 alag hain).\n' +
+             '    Password me @ # $ jaise characters ho to .env me quotes me likho:\n' +
+             '    MYSQL_PASSWORD="#Pomera@2003"');
       else if (e.code === 'ETIMEDOUT' || e.code === 'ECONNREFUSED')
         info('Server tak pahuncha hi nahi. Agar LOCAL machine se chala rahe ho to hPanel →\n' +
              '    Databases → Remote MySQL me apna IP whitelist karo, aur MYSQL_HOST me\n' +

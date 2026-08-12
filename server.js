@@ -82,6 +82,9 @@ function checkPassword(plain, stored) {
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+// NODE_ENV "production" ho ya "PRODUCTION" — dono chalne chahiye.
+const IS_PRODUCTION = (process.env.NODE_ENV || '').trim().toLowerCase() === 'production';
+
 // Login tokens isi se sign hote hain. Pehle yahan ek hardcoded fallback tha —
 // repo public hone par wo secret sabko dikh jaata aur koi bhi admin ka token
 // bana sakta tha. Ab: production me secret NA ho to app start hi nahi hoti,
@@ -89,7 +92,7 @@ const PORT = process.env.PORT || 3000;
 const JWT_SECRET = (() => {
   const s = (process.env.SESSION_SECRET || '').trim();
   if (s.length >= 16) return s;
-  if ((process.env.NODE_ENV || '').toLowerCase() === 'production') {
+  if (IS_PRODUCTION) {
     console.error('\n  ❌ SESSION_SECRET set nahi hai (ya 16 characters se chhota hai).');
     console.error('     Hosting ki Environment Variables me ek lamba random string daalo,');
     console.error('     warna login tokens surakshit nahi rahenge. App band ho rahi hai.\n');
@@ -970,7 +973,7 @@ app.post('/api/login', async (req, res) => {
       JWT_SECRET,
       { expiresIn: '7d' }
     );
-    const isProduction = process.env.NODE_ENV === 'production';
+    const isProduction = IS_PRODUCTION;
     res.cookie('token', token, {
       httpOnly: true,
       secure: isProduction,
@@ -982,7 +985,7 @@ app.post('/api/login', async (req, res) => {
     // Poora error sirf server log me — client ko generic message. Warna DB ka
     // username/host login page par sabko dikh jaata hai.
     console.error('Login failed:', err.message);
-    const detail = process.env.NODE_ENV === 'production' ? '' : ' (' + err.message + ')';
+    const detail = IS_PRODUCTION ? '' : ' (' + err.message + ')';
     res.status(500).json({ error: 'Server abhi login nahi kar pa raha. Thodi der baad try karo.' + detail });
   }
 });
@@ -3916,6 +3919,55 @@ app.post('/api/admin/clear-tasks', requireAuth, requireAdmin, async (req, res) =
     }
     res.json({ success: true, ...result });
   } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ══════════════════════════════════════════════════════
+// DB CHECK — sirf setup ke waqt, DEBUG_DB se on hota hai
+// ══════════════════════════════════════════════════════
+// Environment variables sahi pahunch rahe hain ya nahi, ye bataata hai.
+// Chalu karne ke liye hosting me DEBUG_DB=koi_random_word set karo, phir
+// kholo:  /api/dbcheck?key=koi_random_word
+// Kaam ho jaaye to DEBUG_DB variable HATA DENA.
+// Password kabhi nahi dikhata — sirf lambai aur pehla/aakhri akshar.
+app.get('/api/dbcheck', (req, res) => {
+  const gate = (process.env.DEBUG_DB || '').trim();
+  if (!gate || String(req.query.key || '') !== gate) return res.status(404).end();
+
+  // Case ka farak pakadne ke liye har character alag dikhate hain
+  const reveal = v => {
+    if (v == null) return { set: false };
+    const s = String(v);
+    return {
+      set: true, length: s.length, value: s,
+      hasUppercase: /[A-Z]/.test(s),
+      hasSpaces: /^\s|\s$/.test(s),
+      lowercased: s.toLowerCase(),
+    };
+  };
+  const mask = v => {
+    if (!v) return { set: false };
+    const s = String(v);
+    return { set: true, length: s.length,
+             looksLike: s.slice(0, 1) + '…' + s.slice(-1),
+             hasSpaces: /^\s|\s$/.test(s) };
+  };
+
+  res.json({
+    DB_BACKEND: process.env.DB_BACKEND || '(not set)',
+    NODE_ENV: process.env.NODE_ENV || '(not set)',
+    MYSQL_HOST: reveal(process.env.MYSQL_HOST),
+    MYSQL_PORT: process.env.MYSQL_PORT || '(not set)',
+    MYSQL_USER: reveal(process.env.MYSQL_USER),
+    MYSQL_DATABASE: reveal(process.env.MYSQL_DATABASE),
+    MYSQL_PASSWORD: mask(process.env.MYSQL_PASSWORD),
+    MYSQL_URL: mask(process.env.MYSQL_URL),
+    // Kahin fallback to nahi lag raha
+    PG_USER: reveal(process.env.PG_USER),
+    PG_DATABASE: reveal(process.env.PG_DATABASE),
+    // Hosting apne aap kuch DB variables inject to nahi kar raha
+    allDbLikeEnvKeys: Object.keys(process.env)
+      .filter(k => /mysql|maria|^db_|database|^pg_/i.test(k)).sort(),
+  });
 });
 
 // ══════════════════════════════════════════════════════

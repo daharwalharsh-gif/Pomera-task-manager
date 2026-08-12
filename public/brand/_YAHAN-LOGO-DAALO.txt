@@ -1,0 +1,14 @@
+Apni Pomera logo file yahan (is folder me) daal do.
+
+  • File ka naam kuch bhi ho sakta hai — WhatsApp ka lamba naam bhi chalega.
+  • SVG sabse best, phir PNG, phir JPG.
+  • Rename karne ki zaroorat nahi.
+
+Do alag file rakhni ho to:
+  • naam me "mark" ya "icon" likha ho  -> sidebar ke top pe + browser tab me
+    (isme sirf sher + suraj rakhna, POMERA text nahi — 32px me text padha nahi jayega)
+  • baaki koi bhi image                -> login page pe poora logo
+
+Sirf EK file daali to wahi dono jagah lag jayegi.
+
+Daalne ke baad browser me Ctrl+Shift+R. Server restart karne ki zaroorat nahi.

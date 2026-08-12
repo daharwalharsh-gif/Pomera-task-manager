@@ -1,0 +1,45 @@
+# ═══════════════════════════════════════════════════
+# Pomera Task Manager — git me kya NAHI jaana chahiye
+# ═══════════════════════════════════════════════════
+
+# ── Dependencies ──
+node_modules/
+npm-debug.log*
+yarn-error.log*
+
+# ── SECRETS — ye kabhi commit mat karna ───────────────
+# .env me DB password, session secret, SMTP password sab hota hai.
+# Agar galti se push ho gaya to password turant badal dena.
+.env
+.env.*
+!.env.example
+
+# Google service account key
+credentials.json
+GOOGLE_CREDENTIALS_oneline.txt
+*service-account*.json
+*-credentials.json
+
+# ── App ka data (server par banta hai, repo me nahi) ──
+data/
+!data/.gitkeep
+
+# ── Build / deploy ──
+.vercel
+dist/
+build/
+
+# ── Logs / temp ──
+*.log
+logs/
+*.tmp
+*.bak
+tmp/
+
+# ── Editor / OS ──
+.claude/
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+desktop.ini

@@ -82,7 +82,23 @@ function checkPassword(plain, stored) {
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-const JWT_SECRET = process.env.SESSION_SECRET || 'taskmanager_secret_2026';
+// Login tokens isi se sign hote hain. Pehle yahan ek hardcoded fallback tha —
+// repo public hone par wo secret sabko dikh jaata aur koi bhi admin ka token
+// bana sakta tha. Ab: production me secret NA ho to app start hi nahi hoti,
+// aur dev me har boot par random bana leti hai.
+const JWT_SECRET = (() => {
+  const s = (process.env.SESSION_SECRET || '').trim();
+  if (s.length >= 16) return s;
+  if ((process.env.NODE_ENV || '').toLowerCase() === 'production') {
+    console.error('\n  ❌ SESSION_SECRET set nahi hai (ya 16 characters se chhota hai).');
+    console.error('     Hosting ki Environment Variables me ek lamba random string daalo,');
+    console.error('     warna login tokens surakshit nahi rahenge. App band ho rahi hai.\n');
+    process.exit(1);
+  }
+  console.warn('  ⚠️  SESSION_SECRET nahi mila — dev ke liye random bana diya');
+  console.warn('     (server restart hote hi sab logout ho jayenge)');
+  return require('crypto').randomBytes(32).toString('hex');
+})();
 
 const cookieParser = require('cookie-parser');
 app.use(cookieParser());

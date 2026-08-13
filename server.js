@@ -158,8 +158,33 @@ const db = DB_BACKEND === 'sheets' ? require('./sheets-db')
          :                           require('./hybrid-db');
 // Schema is defined in the adapter — no runtime migrations needed.
 // init() loads all tables into the in-memory store on boot.
+// Purane data me email/role CAPITAL me ho sakte hain (Excel se import,
+// ya haath se dala hua). MySQL/alasql me comparison case-sensitive hai,
+// isliye aise users login nahi kar paate aur unke role checks fail hote
+// hain. Boot par ek baar normalize kar dete hain — sirf tab likhte hain
+// jab kuch actually badla ho.
+async function normalizeUserData() {
+  try {
+    const [users] = await db.query('SELECT id, email, role FROM users');
+    let fixed = 0;
+    for (const u of users) {
+      const email = String(u.email || '').trim();
+      const role  = String(u.role || '').trim();
+      const nEmail = email.toLowerCase();
+      const nRole  = role.toLowerCase() || 'user';
+      if (nEmail === email && nRole === role) continue;
+      await db.query('UPDATE users SET email=?, role=? WHERE id=?', [nEmail, nRole, u.id]);
+      fixed++;
+    }
+    if (fixed) console.log(`  🔧 ${fixed} user(s) ka email/role lowercase kiya (login ke liye zaroori)`);
+  } catch (err) {
+    console.error('  ⚠️  User data normalize nahi hua:', err.message);
+  }
+}
+
 const _dbReady = db.init()
   .then(() => console.log(`  ✅ Database ready (backend: ${DB_BACKEND})`))
+  .then(normalizeUserData)
   .catch(err => {
     console.error(`  ❌ Database init failed (backend: ${DB_BACKEND}):`, err.message);
     if (DB_BACKEND === 'sheets') {
@@ -971,8 +996,13 @@ async function computeFmsStats(hodDept = '', collectPending = false, opts = {}) 
 app.post('/api/login', async (req, res) => {
   try {
     const { email, password } = req.body;
-    const [rows] = await db.query('SELECT * FROM users WHERE email = ?', [email]);
-    const user = rows[0];
+    // Email me chhote-bade akshar ka farak nahi hona chahiye. Database me
+    // "DEEPG7070@GMAIL.COM" pada ho aur user "deepg7070@gmail.com" type kare
+    // to bhi login hona chahiye. Isliye exact match ki jagah normalize karke
+    // dhoondhte hain (aage-peeche ki space bhi hata dete hain).
+    const emailKey = String(email || '').trim().toLowerCase();
+    const [rows] = await db.query('SELECT * FROM users');
+    const user = rows.find(u => String(u.email || '').trim().toLowerCase() === emailKey);
     const check = user ? checkPassword(password, user.password) : { ok: false };
     if (!check.ok) return res.status(401).json({ error: 'Invalid email or password' });
     // Legacy bcrypt hash → migrate to plain text (admin can now see in sheet)
@@ -981,6 +1011,9 @@ app.post('/api/login', async (req, res) => {
     }
 
     // Issue JWT token
+    // Role bhi normalize — "User" (capital) database me ho to bhi app ke
+    // saare role checks ('user'/'admin'/'hod'/'pc') sahi chalein.
+    user.role = String(user.role || 'user').trim().toLowerCase();
     const token = jwt.sign(
       { userId: user.id, role: user.role, name: user.name },
       JWT_SECRET,
@@ -2461,6 +2494,7 @@ app.post('/api/users', requireAuth, requireAdmin, async (req, res) => {
     if (!name || !email || !password) return res.status(400).json({ error: 'All fields required' });
     const [ex] = await db.query('SELECT id FROM users WHERE email=?', [email]);
     if (ex[0]) return res.status(400).json({ error: 'Email already exists' });
+    // email/role lowercase — login aur role checks isi par depend karte hain
     await db.query('INSERT INTO users (name,title,email,notification_email,password,role,phone,department,week_off,extra_off) VALUES (?,?,?,?,?,?,?,?,?,?)',
       [name, title||'', email, notification_email||'', password, role||'user', phone||null, department||'', week_off||'', extra_off||'']);
     res.json({ success: true });
@@ -2499,6 +2533,9 @@ app.post('/api/users/bulk', requireAuth, requireAdmin, async (req, res) => {
     let added = 0, skipped = 0, errors = [];
     for (const u of users) {
       if (!u.name || !u.email || !u.password) { errors.push(`${u.email||'?'}: missing fields`); continue; }
+      // email/role hamesha lowercase — warna login case-sensitive match me fail hota hai
+      u.email = String(u.email).trim().toLowerCase();
+      u.role  = String(u.role || 'user').trim().toLowerCase();
       const [ex] = await db.query('SELECT id FROM users WHERE email=?', [u.email]);
       if (ex[0]) { skipped++; continue; }
       await db.query('INSERT INTO users (name,email,password,role,phone,department,week_off,extra_off) VALUES (?,?,?,?,?,?,?,?)',

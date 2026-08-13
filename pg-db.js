@@ -455,7 +455,7 @@ async function mysqlEnsureConnectable() {
   for (let i = 0; i < cands.length; i++) {
     const c = cands[i];
     _mysqlCred = c;
-    try { await _pool && _pool.end(); } catch (_) {}
+    if (_pool) { try { await _pool.end(); } catch (_) {} }
     _pool = null;
     try {
       await getPool().query('SELECT 1');
@@ -548,7 +548,12 @@ async function init() {
   if (_initPromise) return _initPromise;
   _initPromise = (async () => {
     try {
-      const pool = LOCAL_MODE ? null : getPool();
+      // NOTE: mysqlEnsureConnectable() neeche pool ko band karke naya bana
+      // sakta hai, isliye is variable ko baad me refresh karte hain.
+      // MySQL me pool mysqlEnsureConnectable() banata hai (wo credentials
+      // try karta hai), isliye yahan pehle se banane ki zaroorat nahi —
+      // warna do pool bante the aur log bhi do baar aata tha.
+      let pool = (LOCAL_MODE || MYSQL_MODE) ? null : getPool();
 
       // 1. Create alasql in-memory tables (id INT, rest STRING) — same as
       //    sheets-db: bulk load bypasses the PK index so `id` stays plain INT
@@ -561,8 +566,8 @@ async function init() {
       }
 
       // 2. Ensure tables + columns exist (local mode me koi DDL nahi)
-      if (MYSQL_MODE) await mysqlEnsureConnectable();
-      if (!LOCAL_MODE) await ensureSchema(MYSQL_MODE ? getPool() : pool);
+      if (MYSQL_MODE) { await mysqlEnsureConnectable(); pool = getPool(); }
+      if (!LOCAL_MODE) await ensureSchema(pool);
 
       // 3. Load managed tables into alasql
       const totalRows = await loadAllTables(pool);

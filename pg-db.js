@@ -348,6 +348,9 @@ function loadAllTablesLocal() {
 
 async function loadAllTables(pool) {
   if (LOCAL_MODE) return loadAllTablesLocal();
+  // Diya hua reference purana ho sakta hai (mysqlEnsureConnectable pool ko
+  // band karke naya banata hai) — isliye MySQL me hamesha taaza pool lo.
+  if (MYSQL_MODE) pool = getPool();
   // PARALLEL load — saari managed tables ka SELECT ek saath. Serverless pe
   // har request se pehle reload hota hai, isliye 8 sequential round-trips ki
   // jagah ~1 round-trip = har request bahut fast.
@@ -478,6 +481,7 @@ async function mysqlEnsureConnectable() {
 }
 
 async function ensureSchemaMysql(pool, wantMigrate) {
+  pool = getPool();   // hamesha taaza
   const [tRows] = await pool.query(
     `SELECT table_name AS t FROM information_schema.tables
      WHERE table_schema = DATABASE() AND table_name IN (?)`, [_managed]);

@@ -3922,6 +3922,33 @@ app.post('/api/admin/clear-tasks', requireAuth, requireAdmin, async (req, res) =
 });
 
 // ══════════════════════════════════════════════════════
+// HEALTH — database chal raha hai ya nahi
+// ══════════════════════════════════════════════════════
+// Public hai, par sirf itna bataata hai ki DB "ok" hai ya nahi, aur fail
+// hone par MySQL ka error CODE (jaise ER_ACCESS_DENIED_ERROR). Username,
+// password, host — kuch bhi nahi dikhata. Setup debug karne ke liye.
+app.get('/api/health', async (req, res) => {
+  const out = { app: 'ok', backend: DB_BACKEND, db: 'unknown' };
+  try {
+    const [rows] = await db.query('SELECT COUNT(*) AS c FROM users');
+    out.db = 'ok';
+    out.users = rows[0] ? Number(rows[0].c) : 0;
+  } catch (err) {
+    out.db = 'error';
+    out.code = err.code || '(no code)';
+    // Kaunsi cheez galat hai, bina koi value bataye
+    out.likely =
+      err.code === 'ER_ACCESS_DENIED_ERROR' ? 'MYSQL_USER ya MYSQL_PASSWORD galat hai'
+      : err.code === 'ER_DBACCESS_DENIED_ERROR' ? 'user ke paas is database ka access nahi'
+      : err.code === 'ER_BAD_DB_ERROR' ? 'MYSQL_DATABASE ka naam galat hai'
+      : err.code === 'ECONNREFUSED' || err.code === 'ETIMEDOUT' ? 'MYSQL_HOST/PORT tak pahunch nahi raha'
+      : err.code === 'ENOTFOUND' ? 'MYSQL_HOST ka naam resolve nahi hua'
+      : 'dekho: ' + String(err.message || '').slice(0, 80);
+  }
+  res.status(out.db === 'ok' ? 200 : 503).json(out);
+});
+
+// ══════════════════════════════════════════════════════
 // DB CHECK — sirf setup ke waqt, DEBUG_DB se on hota hai
 // ══════════════════════════════════════════════════════
 // Environment variables sahi pahunch rahe hain ya nahi, ye bataata hai.

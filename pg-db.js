@@ -359,7 +359,16 @@ async function loadAllTables(pool) {
       const res = await pool.query(`SELECT ${colList} FROM ${qIdent(table)}`);
       rows = MYSQL_MODE ? (res[0] || []) : (res.rows || []);
     } catch (err) {
-      // Table might not exist yet on a fresh DB — treat as empty.
+      // SIRF "table hai hi nahi" ko khaali maano (fresh DB ka normal case).
+      // Baaki koi bhi error (connection toota, timeout, permission) chup-chaap
+      // khaali maan liya jaye to memory khaali ho jaati hai — aur agla write
+      // poori table ko DELETE + rewrite karta hai, yaani SAARA DATA UD JATA HAI.
+      // Isliye asli error par yahin ruk jaate hain.
+      const tableMissing = err.code === 'ER_NO_SUCH_TABLE' || err.code === '42P01';
+      if (!tableMissing) {
+        console.error('  ❌ "' + table + '" load nahi hui: ' + (err.code || '') + ' ' + err.message);
+        throw err;
+      }
       rows = [];
     }
     const inserts = [];

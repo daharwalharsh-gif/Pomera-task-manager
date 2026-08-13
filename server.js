@@ -186,7 +186,20 @@ const _dbReady = db.init()
 // internal tool, and the only way in-memory caching can stay correct
 // across serverless instances.
 // ══════════════════════════════════════════════════════
-if (process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME) {
+// Ye guard pehle sirf Vercel/Lambda par chalta tha. Par koi bhi hosting
+// (Hostinger samet) app ke ek se zyada instance chala sakti hai — aur tab
+// har instance ka apna memory snapshot hota hai. Purane snapshot wala
+// instance jab likhta hai to poori table rewrite karta hai aur dusre
+// instance ka data mit jata hai.
+// Isliye ab har asli database ke saath ye guard ON rehta hai.
+// Sirf DB_BACKEND=local (ek hi process, ek hi file) me iski zaroorat nahi.
+// Zabardasti band karna ho: MULTI_INSTANCE=0
+const CONSISTENCY_GUARD =
+  !!(process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME) ||
+  (DB_BACKEND !== 'local' && !/^(0|false|no|off)$/i.test(process.env.MULTI_INSTANCE || ''));
+
+if (CONSISTENCY_GUARD) {
+  console.log('  🛡  Multi-instance guard ON — har mutation se pehle DB se fresh data');
   // 1. Reload-before — only for data routes (skip static assets).
   //    Mutations (POST/PUT/DELETE/PATCH) pe force=true → TTL ignore, hamesha
   //    fresh PG state se shuru ho (warna stale memory ka full-rewrite flush

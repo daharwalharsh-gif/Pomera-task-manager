@@ -875,6 +875,7 @@ tbody tr:last-child td{border-bottom:none;}
           <input type="text" id="userSearch" placeholder="Search by name, email, dept, role…" oninput="filterUsers()"
             style="padding:8px 12px 8px 32px;border:1.5px solid #e2e8f0;border-radius:8px;font-size:13px;font-family:'Inter',sans-serif;outline:none;width:260px"/>
         </div>
+        <button class="btn btn-outline" onclick="openBulkUsers()">⬆ Bulk Upload</button>
         <button class="btn btn-primary" onclick="openAddUser()">+ Add User</button>
       </div>
     </div>
@@ -2206,6 +2207,48 @@ Emp ID	Emp Name	Attn Date	In Time	Out Time	Tota Hrs	OS Hrs	Status
         <button class="btn btn-outline btn-sm" onclick="uploadUsersCSV()">Upload CSV</button>
         <button class="btn btn-outline btn-sm" onclick="downloadUserSample()">Sample</button>
       </div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════
+     BULK USERS — Excel/Sheet se paste ya CSV
+══════════════════════════════════════ -->
+<div class="modal-overlay" id="bulkUsersModal">
+  <div class="modal" style="max-width:720px">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;gap:10px">
+      <h3 style="margin:0">⬆ Bulk Upload Users</h3>
+      <button class="btn btn-outline" onclick="closeModal('bulkUsersModal')" style="flex-shrink:0">✕ Close</button>
+    </div>
+
+    <div style="font-size:12.5px;color:#64748b;line-height:1.7;background:#fdf2f2;border:1px solid #f4cfd0;
+                border-radius:9px;padding:10px 12px;margin-bottom:12px">
+      <b>Do tareeke:</b><br>
+      1. Excel / Google Sheet me rows select karo → <b>Ctrl+C</b> → neeche box me <b>Ctrl+V</b><br>
+      2. Ya CSV file choose karo<br>
+      Column ka order koi bhi ho — header row se pehchan liya jaata hai.
+      Zaroori: <b>name</b>, <b>email</b>, <b>password</b>. Optional: role, phone, department, week_off.<br>
+      <b>role</b> me: user / hod / pc / admin (khaali chhoda to user).
+      Jo email pehle se hai, wo row skip ho jaati hai — duplicate nahi bante.
+    </div>
+
+    <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:10px">
+      <input type="file" id="bulkUsersFile" accept=".csv,.txt,.tsv" onchange="bulkUsersReadFile(this)" style="font-size:12.5px"/>
+      <button class="btn btn-outline btn-sm" onclick="downloadUserSample()" style="margin-left:auto">📥 Sample file</button>
+    </div>
+
+    <textarea id="bulkUsersPaste" style="width:100%;min-height:130px;padding:10px 12px;border:1.5px solid #e2e8f0;
+      border-radius:9px;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;outline:none;resize:vertical"
+      placeholder="Yahan paste karo (header row ke saath)…
+name	email	password	role	phone	department	week_off
+Ramesh Kumar	ramesh@company.com	pass123	user	9876543210	Sales	0
+Sunita Sharma	sunita@company.com	pass123	hod	9876543211	Production	0"></textarea>
+
+    <div id="bulkUsersPreview" style="display:none;margin-top:12px"></div>
+
+    <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:14px;flex-wrap:wrap">
+      <button class="btn btn-outline btn-sm" onclick="bulkUsersParse()">👁 Preview</button>
+      <button class="btn btn-primary btn-sm" onclick="bulkUsersImport()">💾 Add Users</button>
     </div>
   </div>
 </div>
@@ -5916,6 +5959,133 @@ async function saveUser() {
   const r = id ? await api(`/api/users/${id}`,'PUT',body) : await api('/api/users','POST',body);
   if (r.error) { err.textContent=r.error; err.style.display='block'; return; }
   closeModal('userModal');
+  loadUsers();
+}
+
+// ══════════════════════════════════════════════════════
+// BULK USERS — Excel/Sheet se paste ya CSV file
+// ══════════════════════════════════════════════════════
+let _bulkUsersRows = null;
+
+function openBulkUsers() {
+  document.getElementById('bulkUsersPaste').value = '';
+  document.getElementById('bulkUsersPreview').style.display = 'none';
+  const f = document.getElementById('bulkUsersFile'); if (f) f.value = '';
+  _bulkUsersRows = null;
+  document.getElementById('bulkUsersModal').classList.add('open');
+}
+
+// Header ke naam thode alag ho sakte hain — sabko pehchan lete hain
+const BULK_USER_COLS = [
+  ['name',       /^(name|full\s*name|employee\s*name|emp\s*name)$/i],
+  ['email',      /^(e[-\s]?mail|email\s*address|login\s*id)$/i],
+  ['password',   /^(password|pass|pwd)$/i],
+  ['role',       /^(role|type|user\s*type)$/i],
+  ['phone',      /^(phone|mobile|contact|phone\s*no|mobile\s*no)$/i],
+  ['department', /^(department|dept|team)$/i],
+  ['week_off',   /^(week[_\s]?off|weekly\s*off|off\s*day)$/i],
+];
+const BULK_ROLES = ['user', 'hod', 'pc', 'admin'];
+
+function bulkUsersParseText(text) {
+  const lines = String(text || '').split(/\r?\n/).filter(l => l.trim());
+  if (!lines.length) return { error: 'Kuch paste nahi kiya' };
+  const delim = lines[0].includes('\t') ? '\t' : ',';
+
+  let hIdx = -1, headers = null;
+  for (let i = 0; i < Math.min(lines.length, 15); i++) {
+    const cells = attSplitLine(lines[i], delim).map(c => c.trim());
+    const j = cells.join(' ').toLowerCase();
+    if (/name/.test(j) && /mail/.test(j)) { hIdx = i; headers = cells; break; }
+  }
+  if (hIdx < 0) return { error: 'Header row nahi mili. Pehli line me "name" aur "email" jaise column names hone chahiye.' };
+
+  const map = {};
+  headers.forEach((h, i) => {
+    const clean = h.replace(/\s+/g, ' ').trim();
+    for (const [field, re] of BULK_USER_COLS) {
+      if (map[field] === undefined && re.test(clean)) { map[field] = i; break; }
+    }
+  });
+  if (map.name === undefined)  return { error: '"name" column nahi mila.' };
+  if (map.email === undefined) return { error: '"email" column nahi mila.' };
+
+  const rows = [], bad = [];
+  for (let i = hIdx + 1; i < lines.length; i++) {
+    const c = attSplitLine(lines[i], delim).map(x => x.trim());
+    const pick = f => (map[f] !== undefined ? (c[map[f]] || '') : '');
+    const name = pick('name'), email = pick('email').toLowerCase();
+    if (!name && !email) continue;
+    if (!name || !email || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) {
+      bad.push((name || email || lines[i]).slice(0, 40)); continue;
+    }
+    let role = pick('role').toLowerCase().trim();
+    if (!BULK_ROLES.includes(role)) role = 'user';
+    rows.push({
+      name, email, role,
+      // Password na diya ho to sab ke liye ek default — user baad me badal sakta hai
+      password: pick('password') || 'pomera123',
+      phone: pick('phone'), department: pick('department'), week_off: pick('week_off'),
+    });
+  }
+  if (!rows.length) return { error: 'Ek bhi valid row nahi mili (name aur sahi email zaroori hai).' };
+  return { rows, bad, mapped: Object.keys(map) };
+}
+
+function bulkUsersParse() {
+  const res = bulkUsersParseText(document.getElementById('bulkUsersPaste').value);
+  const box = document.getElementById('bulkUsersPreview');
+  box.style.display = 'block';
+  if (res.error) {
+    _bulkUsersRows = null;
+    box.innerHTML = '<div style="background:#fef2f2;border:1px solid #fecaca;color:#dc2626;border-radius:9px;' +
+      'padding:10px 12px;font-size:12.5px">⚠️ ' + escapeHtml(res.error) + '</div>';
+    return null;
+  }
+  _bulkUsersRows = res.rows;
+  const existing = new Set((allUsersData || []).map(u => String(u.email || '').toLowerCase()));
+  const dupes = res.rows.filter(r => existing.has(r.email)).length;
+
+  box.innerHTML =
+    '<div style="background:#f0fdf4;border:1px solid #bbf7d0;color:#15803d;border-radius:9px;padding:10px 12px;font-size:12.5px">' +
+      '✓ <b>' + res.rows.length + ' users</b> mile · columns: ' + res.mapped.join(', ') +
+      (dupes ? '<br><span style="color:#b45309">' + dupes + ' email pehle se maujood hain — wo skip ho jayenge</span>' : '') +
+      (res.bad.length ? '<br><span style="color:#b45309">' + res.bad.length + ' row chhodi gayi (naam ya email galat)</span>' : '') +
+    '</div>' +
+    '<div style="max-height:200px;overflow:auto;border:1px solid #e2e8f0;border-radius:9px;margin-top:10px">' +
+    '<table class="att-table" style="min-width:0"><thead><tr><th>Name</th><th>Email</th><th>Role</th>' +
+    '<th>Phone</th><th>Dept</th><th>Password</th></tr></thead><tbody>' +
+    res.rows.slice(0, 40).map(r => {
+      const dup = existing.has(r.email);
+      return '<tr style="cursor:default' + (dup ? ';opacity:.5' : '') + '">' +
+        '<td>' + escapeHtml(r.name) + '</td>' +
+        '<td>' + escapeHtml(r.email) + (dup ? ' <b style="color:#b45309">(skip)</b>' : '') + '</td>' +
+        '<td>' + escapeHtml(r.role) + '</td>' +
+        '<td>' + escapeHtml(r.phone) + '</td>' +
+        '<td>' + escapeHtml(r.department) + '</td>' +
+        '<td>' + escapeHtml(r.password) + '</td></tr>';
+    }).join('') +
+    '</tbody></table></div>' +
+    (res.rows.length > 40 ? '<div style="font-size:11.5px;color:#94a3b8;margin-top:5px">…aur ' + (res.rows.length - 40) + ' rows</div>' : '');
+  return res.rows;
+}
+
+function bulkUsersReadFile(input) {
+  const f = input.files && input.files[0];
+  if (!f) return;
+  const fr = new FileReader();
+  fr.onload = () => { document.getElementById('bulkUsersPaste').value = fr.result; bulkUsersParse(); };
+  fr.readAsText(f);
+}
+
+async function bulkUsersImport() {
+  const users = _bulkUsersRows || bulkUsersParse();
+  if (!users || !users.length) return;
+  if (!confirm(users.length + ' users add karein?')) return;
+  const r = await api('/api/users/bulk', 'POST', { users });
+  if (r.error) return showToast(r.error, 'error');
+  showToast('✓ ' + r.added + ' add hue' + (r.skipped ? ', ' + r.skipped + ' skip (email pehle se thi)' : ''));
+  closeModal('bulkUsersModal');
   loadUsers();
 }
 

@@ -254,6 +254,18 @@ function pgSsl() {
 // (neeche mysqlEnsureConnectable dekho). Ye us retry ka result rakhta hai.
 let _mysqlCaseOverride = null;
 
+// .env me "#Pomera@2003" jaisi value quotes ke saath likhni padti hai (# se
+// comment shuru hota hai). Kuch panel import ke baad quotes hataate nahi —
+// to value me quotes ghus jaate hain aur password galat ho jata hai.
+// Isliye yahan bhi ek baar quotes utaar dete hain.
+function envVal(v) {
+  let x = String(v == null ? '' : v).trim();
+  if (x.length >= 2 && ((x[0] === '"' && x.slice(-1) === '"') || (x[0] === "'" && x.slice(-1) === "'"))) {
+    x = x.slice(1, -1);
+  }
+  return x;
+}
+
 function buildMysqlConfig() {
   const url = (process.env.MYSQL_URL || '').trim();
   const base = {
@@ -269,13 +281,13 @@ function buildMysqlConfig() {
     ? { rejectUnauthorized: false } : undefined;
   if (url) return Object.assign({ uri: url }, base, ssl ? { ssl } : {});
   return Object.assign({
-    host: (process.env.MYSQL_HOST || process.env.DB_HOST || process.env.PG_HOST || 'localhost').trim(),
+    host: envVal(process.env.MYSQL_HOST || process.env.DB_HOST || process.env.PG_HOST || 'localhost'),
     port: parseInt(process.env.MYSQL_PORT || process.env.DB_PORT || '3306', 10),
     user: _mysqlCaseOverride ? _mysqlCaseOverride.user
-        : String(process.env.MYSQL_USER || process.env.DB_USER || process.env.PG_USER || '').trim(),
-    password: String(process.env.MYSQL_PASSWORD || process.env.DB_PASSWORD || process.env.PG_PASSWORD || '').trim(),
+        : envVal(process.env.MYSQL_USER || process.env.DB_USER || process.env.PG_USER),
+    password: envVal(process.env.MYSQL_PASSWORD || process.env.DB_PASSWORD || process.env.PG_PASSWORD),
     database: _mysqlCaseOverride ? _mysqlCaseOverride.database
-        : String(process.env.MYSQL_DATABASE || process.env.DB_NAME || process.env.DB_DATABASE || process.env.PG_DATABASE || '').trim(),
+        : envVal(process.env.MYSQL_DATABASE || process.env.DB_NAME || process.env.DB_DATABASE || process.env.PG_DATABASE),
   }, base, ssl ? { ssl } : {});
 }
 
@@ -410,8 +422,8 @@ async function mysqlEnsureConnectable() {
     return;
   } catch (err) {
     const denied = err && (err.code === 'ER_ACCESS_DENIED_ERROR' || err.code === 'ER_DBACCESS_DENIED_ERROR');
-    const rawUser = String(process.env.MYSQL_USER || process.env.DB_USER || process.env.PG_USER || '').trim();
-    const rawDb   = String(process.env.MYSQL_DATABASE || process.env.DB_NAME || process.env.DB_DATABASE || process.env.PG_DATABASE || '').trim();
+    const rawUser = envVal(process.env.MYSQL_USER || process.env.DB_USER || process.env.PG_USER);
+    const rawDb   = envVal(process.env.MYSQL_DATABASE || process.env.DB_NAME || process.env.DB_DATABASE || process.env.PG_DATABASE);
     const canRetry = denied && !_mysqlCaseOverride &&
                      (rawUser !== rawUser.toLowerCase() || rawDb !== rawDb.toLowerCase());
     if (!canRetry) throw err;

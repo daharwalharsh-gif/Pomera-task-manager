@@ -1355,8 +1355,15 @@ app.post('/api/tasks', requireAuth, async (req, res) => {
     // par request dene wale ke paas approval jaati hai — wo pehle jaisa hi chalta hai.
     if ((type||'checklist') === 'delegation') {
       // Approver: agar approverEmail diya hai to usse dhundo, warna logged-in user
+      // Approver = jis tak Done hone par approval jaayegi. Task_approvals me
+      // request "assigned_by" ke paas jaati hai, isliye chuna hua approver
+      // wahin store hota hai. Frontend id bhejta hai (approver), CSV/API se
+      // email bhi aa sakta hai (approverEmail) — dono chalte hain.
       let assignedBy = req.session.userId;
-      if (approverEmail) {
+      if (req.body.approver) {
+        const [aprRows] = await db.query('SELECT id FROM users WHERE id=? LIMIT 1', [req.body.approver]);
+        if (aprRows.length) assignedBy = aprRows[0].id;
+      } else if (approverEmail) {
         const [aprRows] = await db.query('SELECT id FROM users WHERE email=? LIMIT 1', [approverEmail]);
         if (aprRows.length) assignedBy = aprRows[0].id;
       }
@@ -1439,13 +1446,16 @@ app.put('/api/tasks/:id/status', requireAuth, async (req, res) => {
     const amDoer     = String(task.assigned_to) === String(uid);
     const amAssigner = String(task.assigned_by) === String(uid);
 
-    if (assignerOnly) {
+    if (assignerOnly && isEATask) {
+      // Approval wala delegation: DOER khud Done karta hai. Wo Done turant
+      // complete nahi hota — neeche approval request ban jaati hai jo chune
+      // hue approver (assigned_by) ke paas jaati hai.
+      if (!isAdmin && !isPC && !amDoer && !amAssigner) {
+        return res.status(403).json({ error: 'Ye task aapka nahi hai' });
+      }
+    } else if (assignerOnly) {
       if (!isAdmin && !isPC && !amAssigner) {
-        return res.status(403).json({
-          error: isEATask
-            ? 'Ye task sirf dene wale (EA) hi Done kar sakte hain'
-            : 'Ye task sirf dene wale hi Done kar sakte hain'
-        });
+        return res.status(403).json({ error: 'Ye task sirf dene wale hi Done kar sakte hain' });
       }
     } else {
       // Checklist: jise task mila wahi (ya admin/PC) status badal sakta hai.

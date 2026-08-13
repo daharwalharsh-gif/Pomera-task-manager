@@ -1731,8 +1731,8 @@ Emp ID	Emp Name	Attn Date	In Time	Out Time	Tota Hrs	OS Hrs	Status
         <input type="date" id="dAssignedDate"/>
       </div>
     </div>
-    <div class="form-group" style="display:none">
-      <label>Approver</label>
+    <div class="form-group" id="dApproverWrap" style="display:none">
+      <label>Approver <span style="color:#94a3b8;font-weight:400;font-size:11px">(Done hone par inke paas approval jaayegi)</span></label>
       <select id="dApprover"><option value="">Select Approver</option></select>
     </div>
     <div class="form-row">
@@ -1750,11 +1750,11 @@ Emp ID	Emp Name	Attn Date	In Time	Out Time	Tota Hrs	OS Hrs	Status
         </select>
       </div>
     </div>
-    <div class="form-group" style="display:none">
+    <div class="form-group">
       <label>Approval Required</label>
-      <select id="dApproval">
-        <option value="no">No Approval</option>
-        <option value="yes">Yes Approval</option>
+      <select id="dApproval" onchange="dToggleApprover()">
+        <option value="no">No — doer ka Done seedha complete</option>
+        <option value="yes">Yes — pehle approver ki manzoori chahiye</option>
       </select>
     </div>
     <div class="form-group">
@@ -4885,8 +4885,13 @@ function isEAAssigned(t) {
   if (String(t.approval || 'no') === 'yes') return true;
   return EA_EMAILS.includes(String(t.assignedByEmail || '').trim().toLowerCase());
 }
+// Delegation me by default Done sirf dene wala karta hai.
+// Par jis task par approval='yes' hai, usme DOER khud Done karta hai —
+// aur wo Done seedha complete nahi hota, approver ke paas jata hai.
 function isAssignerOnly(t) {
-  return String(t.type || 'delegation') !== 'checklist';
+  if (String(t.type || 'delegation') === 'checklist') return false;
+  if (String(t.approval || 'no') === 'yes') return false;   // doer khud Done karega
+  return true;
 }
 
 // ── "📤 Assigned by Me" tab ka data (maine jo tasks kisi aur ko diye) ──
@@ -5452,7 +5457,14 @@ async function openDelegate() {
   const opts = users.map(u=>`<option value="${u.id}">${u.name}</option>`).join('');
   document.getElementById('dDoer').innerHTML='<option value="">Select Doer</option>'+opts;
   document.getElementById('dApprover').innerHTML='<option value="">Select Approver</option>'+opts;
+  dToggleApprover();
   document.getElementById('delegateModal').classList.add('open');
+}
+
+// Approval "Yes" ho tabhi Approver chunne ki zaroorat hai.
+function dToggleApprover() {
+  const yes = document.getElementById('dApproval').value === 'yes';
+  document.getElementById('dApproverWrap').style.display = yes ? 'block' : 'none';
 }
 
 async function saveDelegate() {
@@ -5470,6 +5482,9 @@ async function saveDelegate() {
   if (!date) { err.textContent='Please select a due date'; err.style.display='block'; return; }
   if (!assignedDate) { err.textContent='Please select an assigned date'; err.style.display='block'; return; }
   if (!desc) { err.textContent='Description is required'; err.style.display='block'; return; }
+  if (approval === 'yes' && !approver) {
+    err.textContent = 'Approval "Yes" hai to Approver chunna zaroori hai'; err.style.display='block'; return;
+  }
   // Button ko disable karo jab tak task ban na jaaye — double-click se DUPLICATE
   // task ban jaate the (do POST request ek saath), wahi root problem thi.
   const btn = document.getElementById('delegateAssignBtn');

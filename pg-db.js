@@ -250,9 +250,9 @@ function pgSsl() {
 // MySQL connection. Variable ke naam ka koi ek convention zaroori nahi —
 // MYSQL_* pehle, phir DB_* (jaise DB_HOST/DB_USER/DB_NAME/DB_PASSWORD),
 // phir PG_*. Jo bhi hosting panel me daala ho, wahi uth jayega.
-// Agar exact naam se login fail ho jaaye to lowercase wala try karte hain
-// (neeche mysqlEnsureConnectable dekho). Ye us retry ka result rakhta hai.
-let _mysqlCaseOverride = null;
+// Jo credential set chal gaya, wo yahan rakh lete hain (mysqlEnsureConnectable
+// dekho — wo ek-ek karke try karta hai).
+let _mysqlCred = null;
 
 // .env me "#Pomera@2003" jaisi value quotes ke saath likhni padti hai (# se
 // comment shuru hota hai). Kuch panel import ke baad quotes hataate nahi —
@@ -283,11 +283,9 @@ function buildMysqlConfig() {
   return Object.assign({
     host: envVal(process.env.MYSQL_HOST || process.env.DB_HOST || process.env.PG_HOST || 'localhost'),
     port: parseInt(process.env.MYSQL_PORT || process.env.DB_PORT || '3306', 10),
-    user: _mysqlCaseOverride ? _mysqlCaseOverride.user
-        : envVal(process.env.MYSQL_USER || process.env.DB_USER || process.env.PG_USER),
-    password: envVal(process.env.MYSQL_PASSWORD || process.env.DB_PASSWORD || process.env.PG_PASSWORD),
-    database: _mysqlCaseOverride ? _mysqlCaseOverride.database
-        : envVal(process.env.MYSQL_DATABASE || process.env.DB_NAME || process.env.DB_DATABASE || process.env.PG_DATABASE),
+    user: _mysqlCred ? _mysqlCred.user : mysqlCandidates()[0].user,
+    password: _mysqlCred ? _mysqlCred.password : mysqlCandidates()[0].password,
+    database: _mysqlCred ? _mysqlCred.database : mysqlCandidates()[0].database,
   }, base, ssl ? { ssl } : {});
 }
 
@@ -412,30 +410,62 @@ async function reload(force) {
 // MySQL me "ADD COLUMN IF NOT EXISTS" nahi hota, isliye pehle information_schema
 // se maujood columns padh lete hain aur sirf missing hi add karte hain.
 // Sab kuch 2 queries me — cold start slow nahi hota.
-// MySQL username/database case-sensitive hote hain. Hosting panel me galti se
-// CAPITAL type ho jaana bahut common hai. Isliye: pehle jaisa diya hai waisa
-// hi try karo; sirf "Access denied" aane par ek baar lowercase se try karo.
-// Sahi config kabhi nahi badalti — retry tabhi hota hai jab pehla fail ho chuka ho.
-async function mysqlEnsureConnectable() {
-  try {
-    await getPool().query('SELECT 1');
-    return;
-  } catch (err) {
-    const denied = err && (err.code === 'ER_ACCESS_DENIED_ERROR' || err.code === 'ER_DBACCESS_DENIED_ERROR');
-    const rawUser = envVal(process.env.MYSQL_USER || process.env.DB_USER || process.env.PG_USER);
-    const rawDb   = envVal(process.env.MYSQL_DATABASE || process.env.DB_NAME || process.env.DB_DATABASE || process.env.PG_DATABASE);
-    const canRetry = denied && !_mysqlCaseOverride &&
-                     (rawUser !== rawUser.toLowerCase() || rawDb !== rawDb.toLowerCase());
-    if (!canRetry) throw err;
+// Ek hi hosting par aksar do naming convention pade rehte hain — MYSQL_* aur
+// DB_*. Purana set stale ho to sirf "Access denied" milta hai aur samajh nahi
+// aata ki kya galat hai. Isliye jitne bhi credential set milte hain, sabko
+// ek-ek karke try karte hain (+ lowercase variant, kyunki MySQL me naam
+// case-sensitive hota hai). Jo chal gaya, wahi aage use hota hai.
+function mysqlCandidates() {
+  const P = envVal(process.env.MYSQL_PASSWORD || process.env.DB_PASSWORD || process.env.PG_PASSWORD);
+  const sets = [
+    { label: 'MYSQL_*', user: envVal(process.env.MYSQL_USER),
+      database: envVal(process.env.MYSQL_DATABASE), password: envVal(process.env.MYSQL_PASSWORD) || P },
+    { label: 'DB_*', user: envVal(process.env.DB_USER),
+      database: envVal(process.env.DB_NAME || process.env.DB_DATABASE), password: envVal(process.env.DB_PASSWORD) || P },
+    { label: 'PG_*', user: envVal(process.env.PG_USER),
+      database: envVal(process.env.PG_DATABASE), password: envVal(process.env.PG_PASSWORD) || P },
+  ].filter(c => c.user && c.database);
 
-    console.warn('  ⚠️  "' + rawUser + '" se access denied — lowercase se try kar rahe hain…');
-    try { await _pool.end(); } catch (_) {}
-    _pool = null;
-    _mysqlCaseOverride = { user: rawUser.toLowerCase(), database: rawDb.toLowerCase() };
-    await getPool().query('SELECT 1');
-    console.warn('  ✅ lowercase se connect ho gaya. Hosting ke environment variables me');
-    console.warn('     MYSQL_USER aur MYSQL_DATABASE lowercase kar dena behtar hai.');
+  // Har set ka lowercase version bhi (galti se CAPITAL type hua ho to)
+  const out = [];
+  const seen = new Set();
+  for (const c of sets) {
+    for (const v of [c, { ...c, label: c.label + ' (lowercase)',
+                          user: c.user.toLowerCase(), database: c.database.toLowerCase() }]) {
+      const key = v.user + '|' + v.database + '|' + v.password;
+      if (seen.has(key)) continue;
+      seen.add(key); out.push(v);
+    }
   }
+  return out.length ? out : [{ label: 'khaali', user: '', database: '', password: '' }];
+}
+
+async function mysqlEnsureConnectable() {
+  const cands = mysqlCandidates();
+  let lastErr = null;
+  for (let i = 0; i < cands.length; i++) {
+    const c = cands[i];
+    _mysqlCred = c;
+    try { await _pool && _pool.end(); } catch (_) {}
+    _pool = null;
+    try {
+      await getPool().query('SELECT 1');
+      if (i > 0) {
+        console.warn('  ✅ ' + c.label + ' wale credentials se connect hua (' + c.user + ' / ' + c.database + ')');
+        console.warn('     Hosting me baaki purane variables hata dena, warna confusion rahega.');
+      }
+      return;
+    } catch (err) {
+      lastErr = err;
+      const denied = err.code === 'ER_ACCESS_DENIED_ERROR' || err.code === 'ER_DBACCESS_DENIED_ERROR'
+                  || err.code === 'ER_BAD_DB_ERROR';
+      console.warn('  ⚠️  ' + c.label + ' (' + (c.user || 'khaali') + ' / ' + (c.database || 'khaali') +
+                   ') fail: ' + err.code);
+      if (!denied) break;   // network/host wali problem — aage try karne ka fayda nahi
+    }
+  }
+  _mysqlCred = null;
+  throw lastErr || new Error('MySQL connect nahi hua');
 }
 
 async function ensureSchemaMysql(pool, wantMigrate) {

@@ -249,6 +249,10 @@ function pgSsl() {
 }
 // MySQL connection — MYSQL_* na ho to PG_* wali values fallback me use hoti hain,
 // taaki dono backend ek hi .env se chal sakein.
+// Agar exact naam se login fail ho jaaye to lowercase wala try karte hain
+// (neeche mysqlEnsureConnectable dekho). Ye us retry ka result rakhta hai.
+let _mysqlCaseOverride = null;
+
 function buildMysqlConfig() {
   const url = (process.env.MYSQL_URL || '').trim();
   const base = {
@@ -266,9 +270,11 @@ function buildMysqlConfig() {
   return Object.assign({
     host: (process.env.MYSQL_HOST || process.env.PG_HOST || 'localhost').trim(),
     port: parseInt(process.env.MYSQL_PORT || '3306', 10),
-    user: String(process.env.MYSQL_USER || process.env.PG_USER || '').trim(),
+    user: _mysqlCaseOverride ? _mysqlCaseOverride.user
+        : String(process.env.MYSQL_USER || process.env.PG_USER || '').trim(),
     password: String(process.env.MYSQL_PASSWORD || process.env.PG_PASSWORD || '').trim(),
-    database: String(process.env.MYSQL_DATABASE || process.env.PG_DATABASE || '').trim(),
+    database: _mysqlCaseOverride ? _mysqlCaseOverride.database
+        : String(process.env.MYSQL_DATABASE || process.env.PG_DATABASE || '').trim(),
   }, base, ssl ? { ssl } : {});
 }
 
@@ -393,6 +399,32 @@ async function reload(force) {
 // MySQL me "ADD COLUMN IF NOT EXISTS" nahi hota, isliye pehle information_schema
 // se maujood columns padh lete hain aur sirf missing hi add karte hain.
 // Sab kuch 2 queries me — cold start slow nahi hota.
+// MySQL username/database case-sensitive hote hain. Hosting panel me galti se
+// CAPITAL type ho jaana bahut common hai. Isliye: pehle jaisa diya hai waisa
+// hi try karo; sirf "Access denied" aane par ek baar lowercase se try karo.
+// Sahi config kabhi nahi badalti — retry tabhi hota hai jab pehla fail ho chuka ho.
+async function mysqlEnsureConnectable() {
+  try {
+    await getPool().query('SELECT 1');
+    return;
+  } catch (err) {
+    const denied = err && (err.code === 'ER_ACCESS_DENIED_ERROR' || err.code === 'ER_DBACCESS_DENIED_ERROR');
+    const rawUser = String(process.env.MYSQL_USER || process.env.PG_USER || '').trim();
+    const rawDb   = String(process.env.MYSQL_DATABASE || process.env.PG_DATABASE || '').trim();
+    const canRetry = denied && !_mysqlCaseOverride &&
+                     (rawUser !== rawUser.toLowerCase() || rawDb !== rawDb.toLowerCase());
+    if (!canRetry) throw err;
+
+    console.warn('  ⚠️  "' + rawUser + '" se access denied — lowercase se try kar rahe hain…');
+    try { await _pool.end(); } catch (_) {}
+    _pool = null;
+    _mysqlCaseOverride = { user: rawUser.toLowerCase(), database: rawDb.toLowerCase() };
+    await getPool().query('SELECT 1');
+    console.warn('  ✅ lowercase se connect ho gaya. Hosting ke environment variables me');
+    console.warn('     MYSQL_USER aur MYSQL_DATABASE lowercase kar dena behtar hai.');
+  }
+}
+
 async function ensureSchemaMysql(pool, wantMigrate) {
   const [tRows] = await pool.query(
     `SELECT table_name AS t FROM information_schema.tables
@@ -476,8 +508,9 @@ async function init() {
         alasql(`CREATE TABLE IF NOT EXISTS ${t} (${colsSql})`);
       }
 
-      // 2. Ensure PG tables + columns exist (local mode me koi DDL nahi)
-      if (!LOCAL_MODE) await ensureSchema(pool);
+      // 2. Ensure tables + columns exist (local mode me koi DDL nahi)
+      if (MYSQL_MODE) await mysqlEnsureConnectable();
+      if (!LOCAL_MODE) await ensureSchema(MYSQL_MODE ? getPool() : pool);
 
       // 3. Load managed tables into alasql
       const totalRows = await loadAllTables(pool);

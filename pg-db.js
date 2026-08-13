@@ -247,8 +247,9 @@ function pgSsl() {
   }
   return false;
 }
-// MySQL connection — MYSQL_* na ho to PG_* wali values fallback me use hoti hain,
-// taaki dono backend ek hi .env se chal sakein.
+// MySQL connection. Variable ke naam ka koi ek convention zaroori nahi —
+// MYSQL_* pehle, phir DB_* (jaise DB_HOST/DB_USER/DB_NAME/DB_PASSWORD),
+// phir PG_*. Jo bhi hosting panel me daala ho, wahi uth jayega.
 // Agar exact naam se login fail ho jaaye to lowercase wala try karte hain
 // (neeche mysqlEnsureConnectable dekho). Ye us retry ka result rakhta hai.
 let _mysqlCaseOverride = null;
@@ -268,13 +269,13 @@ function buildMysqlConfig() {
     ? { rejectUnauthorized: false } : undefined;
   if (url) return Object.assign({ uri: url }, base, ssl ? { ssl } : {});
   return Object.assign({
-    host: (process.env.MYSQL_HOST || process.env.PG_HOST || 'localhost').trim(),
-    port: parseInt(process.env.MYSQL_PORT || '3306', 10),
+    host: (process.env.MYSQL_HOST || process.env.DB_HOST || process.env.PG_HOST || 'localhost').trim(),
+    port: parseInt(process.env.MYSQL_PORT || process.env.DB_PORT || '3306', 10),
     user: _mysqlCaseOverride ? _mysqlCaseOverride.user
-        : String(process.env.MYSQL_USER || process.env.PG_USER || '').trim(),
-    password: String(process.env.MYSQL_PASSWORD || process.env.PG_PASSWORD || '').trim(),
+        : String(process.env.MYSQL_USER || process.env.DB_USER || process.env.PG_USER || '').trim(),
+    password: String(process.env.MYSQL_PASSWORD || process.env.DB_PASSWORD || process.env.PG_PASSWORD || '').trim(),
     database: _mysqlCaseOverride ? _mysqlCaseOverride.database
-        : String(process.env.MYSQL_DATABASE || process.env.PG_DATABASE || '').trim(),
+        : String(process.env.MYSQL_DATABASE || process.env.DB_NAME || process.env.DB_DATABASE || process.env.PG_DATABASE || '').trim(),
   }, base, ssl ? { ssl } : {});
 }
 
@@ -409,8 +410,8 @@ async function mysqlEnsureConnectable() {
     return;
   } catch (err) {
     const denied = err && (err.code === 'ER_ACCESS_DENIED_ERROR' || err.code === 'ER_DBACCESS_DENIED_ERROR');
-    const rawUser = String(process.env.MYSQL_USER || process.env.PG_USER || '').trim();
-    const rawDb   = String(process.env.MYSQL_DATABASE || process.env.PG_DATABASE || '').trim();
+    const rawUser = String(process.env.MYSQL_USER || process.env.DB_USER || process.env.PG_USER || '').trim();
+    const rawDb   = String(process.env.MYSQL_DATABASE || process.env.DB_NAME || process.env.DB_DATABASE || process.env.PG_DATABASE || '').trim();
     const canRetry = denied && !_mysqlCaseOverride &&
                      (rawUser !== rawUser.toLowerCase() || rawDb !== rawDb.toLowerCase());
     if (!canRetry) throw err;
